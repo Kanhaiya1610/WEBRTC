@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Test</title>
+    <!-- 1. Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Use Inter font */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom styles for textarea */
+        textarea {
+            font-family: monospace;
+            font-size: 0.875rem;
+            line-height: 1.25rem;
+            word-break: break-all;
+        }
+        
+        textarea:disabled {
+            background-color: #4A5568; /* bg-gray-700 */
+            opacity: 0.6;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen flex items-center justify-center font-sans p-4">
+
+    <div class="container mx-auto max-w-4xl w-full bg-gray-800 rounded-lg shadow-xl p-6">
+        <h1 class="text-3xl font-bold text-center text-indigo-400 mb-6">WebRTC Peer-to-Peer Test</h1>
+        
+        <!-- Video feeds -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div class="bg-gray-700 p-4 rounded-lg">
+                <h2 class="text-xl font-semibold mb-2 text-center">Local Stream</h2>
+                <video id="localVideo" playsinline autoplay muted class="w-full h-auto bg-black rounded-md aspect-video"></video>
+            </div>
+            <div class="bg-gray-700 p-4 rounded-lg">
+                <h2 class="text-xl font-semibold mb-2 text-center">Remote Stream</h2>
+                <video id="remoteVideo" playsinline autoplay class="w-full h-auto bg-black rounded-md aspect-video"></video>
+            </div>
+        </div>
+
+        <!-- Connection Button -->
+        <div class="text-center mb-6">
+            <button id="startButton" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg text-lg transition duration-200 shadow-md">
+                1. Start Camera
+            </button>
+        </div>
+
+        <!-- Signaling Text Areas -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+            <!-- Left Side: Create Offer / Receive Answer -->
+            <div class="space-y-4">
+                <div class="bg-gray-700 p-4 rounded-lg">
+                    <button id="createOfferButton" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200 mb-2" disabled>
+                        2. Create Offer
+                    </button>
+                    <textarea id="offerSDP" rows="6" class="w-full p-2 bg-gray-900 text-gray-300 rounded-md border border-gray-600" placeholder="Click 'Create Offer' to generate..." readonly></textarea>
+                </div>
+                <div class="bg-gray-700 p-4 rounded-lg">
+                    <textarea id="answerSDP" rows="6" class="w-full p-2 bg-gray-900 text-gray-300 rounded-md border border-gray-600" placeholder="Paste the 'Answer' from the other device here..."></textarea>
+                    <button id="connectButton" class="w-full mt-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200" disabled>
+                        5. Connect
+                    </button>
+                </div>
+            </div>
+
+            <!-- Right Side: Receive Offer / Create Answer -->
+            <div class="space-y-4">
+                <div class="bg-gray-700 p-4 rounded-lg">
+                    <textarea id="offerToReceive" rows="6" class="w-full p-2 bg-gray-900 text-gray-300 rounded-md border border-gray-600" placeholder="Paste the 'Offer' from the other device here..."></textarea>
+                    <button id="createAnswerButton" class="w-full mt-2 bg-yellow-600 hover:bg-yellow-700 text-black font-bold py-2 px-4 rounded-lg transition duration-200" disabled>
+                        3. Create Answer
+                    </button>
+                </div>
+                <div class="bg-gray-700 p-4 rounded-lg">
+                    <h3 class="font-semibold mb-2">4. Your Answer:</h3>
+                    <textarea id="answerToShare" rows="6" class="w-full p-2 bg-gray-900 text-gray-300 rounded-md border border-gray-600" placeholder="Your 'Answer' will appear here to copy..." readonly></textarea>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Status Message -->
+        <div id="statusMessage" class="text-center text-yellow-400 font-medium mt-4 h-6"></div>
+    </div>
+
+    <script>
+        // --- DOM Elements ---
+        const startButton = document.getElementById('startButton');
+        const createOfferButton = document.getElementById('createOfferButton');
+        const createAnswerButton = document.getElementById('createAnswerButton');
+        const connectButton = document.getElementById('connectButton');
+        
+        const localVideo = document.getElementById('localVideo');
+        const remoteVideo = document.getElementById('remoteVideo');
+        
+        const offerSDP = document.getElementById('offerSDP');
+        const answerSDP = document.getElementById('answerSDP');
+        const offerToReceive = document.getElementById('offerToReceive');
+        const answerToShare = document.getElementById('answerToShare');
+        const statusMessage = document.getElementById('statusMessage');
+
+        // --- WebRTC Globals ---
+        let localStream;
+        let remoteStream;
+        let pc; // PeerConnection
+
+        // --- Configuration ---
+        // We use Google's public STUN server.
+        const configuration = {
+            iceServers: [
+                {
+                    urls: 'stun:stun.l.google.com:19302'
+                }
+            ]
+        };
+
+        // --- Event Listeners ---
+        startButton.onclick = startCamera;
+        createOfferButton.onclick = createOffer;
+        createAnswerButton.onclick = createAnswer;
+        connectButton.onclick = connectPeers;
+        
+        // Enable/disable createAnswerButton based on input
+        offerToReceive.oninput = () => {
+            createAnswerButton.disabled = !localStream || !offerToReceive.value;
+        };
+
+        // Enable/disable connectButton based on input
+        answerSDP.oninput = () => {
+            // Only enable if the textarea is not disabled (i.e., we are the offerer)
+            connectButton.disabled = !pc || !answerSDP.value || answerSDP.disabled;
+        };
+
+        // --- Functions ---
+
+        /**
+         * 1. Starts the user's camera and microphone
+         */
+        async function startCamera() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                localVideo.srcObject = localStream;
+                
+                // Enable buttons
+                createOfferButton.disabled = false;
+                offerToReceive.disabled = false;
+                
+                startButton.disabled = true;
+                startButton.innerText = "Camera Active";
+                startButton.classList.replace('bg-indigo-600', 'bg-gray-500');
+                showStatus("Camera started. Ready to create or receive an offer.");
+            } catch (err) {
+                console.error('Error accessing media devices.', err);
+                showStatus("Error: Could not access camera/mic. Check permissions.");
+            }
+        }
+
+        /**
+         * 2. Creates a WebRTC peer connection and generates an offer
+         */
+        async function createOffer() {
+            if (!localStream) {
+                showStatus("Please start camera first.");
+                return;
+            }
+            
+            showStatus("Creating offer...");
+            
+            // Create PeerConnection
+            pc = new RTCPeerConnection(configuration);
+            
+            // Add local stream tracks to the connection
+            localStream.getTracks().forEach(track => {
+                pc.addTrack(track, localStream);
+            });
+
+            // Set up event listeners for the connection
+            setupPeerConnectionEvents();
+
+            // Create offer
+            try {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                
+                // Display the offer SDP to be shared
+                offerSDP.value = JSON.stringify(pc.localDescription);
+                showStatus("Offer created. Copy it and send to the other peer.");
+                
+                createOfferButton.disabled = true;
+
+                // --- FIX ---
+                // Disable the "answerer" side to prevent role confusion
+                // This client is now the "offerer"
+                offerToReceive.disabled = true;
+                offerToReceive.placeholder = "This client is the 'offerer'.";
+                createAnswerButton.disabled = true;
+                // --- END FIX ---
+
+            } catch (err) {
+                console.error('Error creating offer.', err);
+                showStatus("Error creating offer.");
+            }
+        }
+        
+        /**
+         * 3. Creates an answer to a received offer
+         */
+        async function createAnswer() {
+            if (!localStream) {
+                showStatus("Please start camera first.");
+                return;
+            }
+            if (!offerToReceive.value) {
+                showStatus("Please paste the offer first.");
+                return;
+            }
+
+            showStatus("Creating answer...");
+
+            // Create PeerConnection
+            pc = new RTCPeerConnection(configuration);
+
+            // Add local stream tracks
+            localStream.getTracks().forEach(track => {
+                pc.addTrack(track, localStream);
+            });
+
+            // Set up event listeners
+            setupPeerConnectionEvents();
+            
+            try {
+                // Parse and set the remote offer
+                const offer = JSON.parse(offerToReceive.value);
+                await pc.setRemoteDescription(new RTCSessionDescription(offer));
+                
+                // Create answer
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+
+                // Display the answer SDP to be shared
+                answerToShare.value = JSON.stringify(pc.localDescription);
+                showStatus("Answer created. Copy it and send back to the offerer.");
+                
+                createAnswerButton.disabled = true;
+                
+                // --- FIX ---
+                // Disable the "offerer" side to prevent role confusion
+                // This client is now the "answerer"
+                createOfferButton.disabled = true;
+                answerSDP.disabled = true;
+                answerSDP.placeholder = "This client is the 'answerer'.";
+                connectButton.disabled = true;
+                // --- END FIX ---
+                
+            } catch (err) {
+                console.error('Error creating answer.', err);
+                showStatus("Error creating answer. Is the offer valid?");
+            }
+        }
+
+        /**
+         * 5. Connects peers by setting the remote answer
+         */
+        async function connectPeers() {
+            if (!pc) {
+                showStatus("Error: Peer connection not initialized.");
+                return;
+            }
+            if (!answerSDP.value) {
+                showStatus("Please paste the answer first.");
+                return;
+            }
+
+            // This function should only be called by the "offerer"
+            // The pc.signalingState should be 'have-local-offer'
+            if (pc.signalingState !== 'have-local-offer') {
+                showStatus(`Error: Wrong state (${pc.signalingState}). Only the 'offerer' can connect.`);
+                return;
+            }
+
+            showStatus("Connecting...");
+
+            try {
+                // Parse and set the remote answer
+                const answer = JSON.parse(answerSDP.value);
+                await pc.setRemoteDescription(new RTCSessionDescription(answer));
+                
+                showStatus("Peer connection established!");
+                connectButton.disabled = true;
+                
+            } catch (err) {
+                // This is where the original error was thrown
+                console.error('Error setting remote description.', err);
+                showStatus(`Error connecting: ${err.message}`);
+            }
+        }
+        
+        /**
+         * Sets up all the necessary event listeners for the RTCPeerConnection
+         */
+        function setupPeerConnectionEvents() {
+            // Event listener for when the remote stream is added
+            pc.ontrack = (event) => {
+                if (!remoteStream) {
+                    remoteStream = new MediaStream();
+                }
+                
+                // Add the track to the remote stream
+                remoteStream.addTrack(event.track);
+                
+                // Display the remote stream
+                remoteVideo.srcObject = remoteStream;
+                showStatus("Receiving remote stream!");
+            };
+
+            // Event listener for ICE candidates
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    // This example uses automatic ICE candidate handling (trickle ICE)
+                    // which is included in the SDP offer/answer.
+                    // For more complex scenarios, candidates might be signaled separately.
+                    console.log("Found ICE candidate:", event.candidate);
+                } else {
+                    console.log("All ICE candidates found.");
+                }
+            };
+
+            // Event listener for connection state changes
+            pc.onconnectionstatechange = (event) => {
+                showStatus(`Connection state: ${pc.connectionState}`);
+                if (pc.connectionState === 'connected') {
+                    showStatus("Peers connected!");
+                }
+                if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                    showStatus("Connection failed or disconnected.");
+                }
+            };
+
+            // Event listener for signaling state changes
+            pc.onsignalingstatechange = (event) => {
+                console.log(`Signaling state: ${pc.signalingState}`);
+            };
+        }
+        
+        /**
+         * Utility function to show status messages
+         */
+        function showStatus(message) {
+            console.log(message);
+            statusMessage.innerText = message;
+        }
+
+    </script>
+</body>
+</html>
+
