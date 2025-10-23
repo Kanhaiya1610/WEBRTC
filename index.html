@@ -38,10 +38,6 @@
             </div>
             <div class="bg-gray-700 p-4 rounded-lg">
                 <h2 class="text-xl font-semibold mb-2 text-center">Remote Stream</h2>
-                <!-- 
-                  FIX: Added the 'muted' attribute here. 
-                  Browsers block autoplay for video with audio unless it's muted.
-                -->
                 <video id="remoteVideo" playsinline autoplay muted class="w-full h-auto bg-black rounded-md aspect-video"></video>
             </div>
         </div>
@@ -148,11 +144,6 @@
                 localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
                 localVideo.srcObject = localStream;
                 
-                // Add a check to make sure local video is playing
-                localVideo.onloadedmetadata = () => {
-                    localVideo.play().catch(e => console.warn("Local video play failed:", e));
-                };
-
                 // Enable buttons
                 createOfferButton.disabled = false;
                 offerToReceive.disabled = false;
@@ -180,33 +171,48 @@
             
             // Create PeerConnection
             pc = new RTCPeerConnection(configuration);
+            setupPeerConnectionEvents(); // Setup ontrack, onconnectionstatechange
+
+            // --- FIX: Wait for all ICE candidates ---
+            // Create a promise that resolves when ICE gathering is complete
+            const iceGatheringPromise = new Promise(resolve => {
+                pc.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        console.log("Found ICE candidate:", event.candidate);
+                    } else {
+                        // event.candidate is null, meaning gathering is complete
+                        console.log("All ICE candidates found. Offer is complete.");
+                        resolve();
+                    }
+                };
+            });
+            // --- END FIX ---
             
             // Add local stream tracks to the connection
             localStream.getTracks().forEach(track => {
                 pc.addTrack(track, localStream);
             });
 
-            // Set up event listeners for the connection
-            setupPeerConnectionEvents();
-
             // Create offer
             try {
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
                 
-                // Display the offer SDP to be shared
+                // --- FIX: Wait for ICE gathering to finish ---
+                showStatus("Gathering ICE candidates... (this may take a moment)");
+                await iceGatheringPromise;
+                // --- END FIX ---
+                
+                // Now pc.localDescription contains the full offer + all candidates
                 offerSDP.value = JSON.stringify(pc.localDescription);
                 showStatus("Offer created. Copy it and send to the other peer.");
                 
                 createOfferButton.disabled = true;
 
-                // --- FIX ---
                 // Disable the "answerer" side to prevent role confusion
-                // This client is now the "offerer"
                 offerToReceive.disabled = true;
                 offerToReceive.placeholder = "This client is the 'offerer'.";
                 createAnswerButton.disabled = true;
-                // --- END FIX ---
 
             } catch (err) {
                 console.error('Error creating offer.', err);
@@ -231,14 +237,26 @@
 
             // Create PeerConnection
             pc = new RTCPeerConnection(configuration);
+            setupPeerConnectionEvents(); // Setup ontrack, onconnectionstatechange
+
+            // --- FIX: Wait for all ICE candidates ---
+            const iceGatheringPromise = new Promise(resolve => {
+                pc.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        console.log("Found ICE candidate:", event.candidate);
+                    } else {
+                        // event.candidate is null, meaning gathering is complete
+                        console.log("All ICE candidates found. Answer is complete.");
+                        resolve();
+                    }
+                };
+            });
+            // --- END FIX ---
 
             // Add local stream tracks
             localStream.getTracks().forEach(track => {
                 pc.addTrack(track, localStream);
             });
-
-            // Set up event listeners
-            setupPeerConnectionEvents();
             
             try {
                 // Parse and set the remote offer
@@ -248,21 +266,23 @@
                 // Create answer
                 const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
+                
+                // --- FIX: Wait for ICE gathering to finish ---
+                showStatus("Gathering ICE candidates... (this may take a moment)");
+                await iceGatheringPromise;
+                // --- END FIX ---
 
-                // Display the answer SDP to be shared
+                // Now pc.localDescription contains the full answer + all candidates
                 answerToShare.value = JSON.stringify(pc.localDescription);
                 showStatus("Answer created. Copy it and send back to the offerer.");
                 
                 createAnswerButton.disabled = true;
                 
-                // --- FIX ---
                 // Disable the "offerer" side to prevent role confusion
-                // This client is now the "answerer"
                 createOfferButton.disabled = true;
                 answerSDP.disabled = true;
                 answerSDP.placeholder = "This client is the 'answerer'.";
                 connectButton.disabled = true;
-                // --- END FIX ---
                 
             } catch (err) {
                 console.error('Error creating answer.', err);
@@ -283,8 +303,6 @@
                 return;
             }
 
-            // This function should only be called by the "offerer"
-            // The pc.signalingState should be 'have-local-offer'
             if (pc.signalingState !== 'have-local-offer') {
                 showStatus(`Error: Wrong state (${pc.signalingState}). Only the 'offerer' can connect.`);
                 return;
@@ -301,7 +319,6 @@
                 connectButton.disabled = true;
                 
             } catch (err) {
-                // This is where the original error was thrown
                 console.error('Error setting remote description.', err);
                 showStatus(`Error connecting: ${err.message}`);
             }
@@ -309,6 +326,7 @@
         
         /**
          * Sets up all the necessary event listeners for the RTCPeerConnection
+         * (Except onicecandidate, which is handled in createOffer/createAnswer)
          */
         function setupPeerConnectionEvents() {
             // Event listener for when the remote stream is added
@@ -324,18 +342,6 @@
                 // Display the remote stream
                 remoteVideo.srcObject = remoteStream;
                 remoteVideo.play().catch(e => console.warn("Remote video play failed:", e));
-            };
-
-            // Event listener for ICE candidates
-            pc.onicecandidate = (event) => {
-                if (event.candidate) {
-                    // This example uses automatic ICE candidate handling (trickle ICE)
-                    // which is included in the SDP offer/answer.
-                    // For more complex scenarios, candidates might be signaled separately.
-                    console.log("Found ICE candidate:", event.candidate);
-                } else {
-                    console.log("All ICE candidates found.");
-                }
             };
 
             // Event listener for connection state changes
