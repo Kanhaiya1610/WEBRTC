@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebRTC P2P Test</title>
+    <title>WebRTC P2P Test (with TURN)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: 'Inter', sans-serif; }
@@ -24,7 +24,6 @@
             </div>
             <div class="bg-gray-700 p-4 rounded-lg">
                 <h2 class="text-xl font-semibold mb-2 text-center">Remote Stream</h2>
-                <!-- FIX: Removed the 'muted' attribute to allow remote audio and video to play after user interaction. -->
                 <video id="remoteVideo" playsinline autoplay class="w-full h-auto bg-black rounded-md aspect-video"></video>
             </div>
         </div>
@@ -91,7 +90,25 @@
         let localStream;
         let pc; // PeerConnection
 
-        const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        // ======================================================================
+        // --- START: CODE UPDATED WITH TURN SERVER ---
+        // ======================================================================
+        const configuration = { 
+            iceServers: [
+                // Plan A: Try to connect directly using a STUN server
+                { urls: 'stun:stun.l.google.com:19302' },
+
+                // Plan B: If STUN fails, use this TURN server as a fallback relay
+                {
+                    urls: 'turn:relay1.expressturn.com:3480',
+                    username: '000000002076492763',
+                    credential: 'c0gF9hE/qvrhetCJUVOMWrvbUa8=' // Note: The API uses 'credential', not 'password'
+                }
+            ] 
+        };
+        // ======================================================================
+        // --- END: CODE UPDATED ---
+        // ======================================================================
 
         startButton.onclick = startCamera;
         createOfferButton.onclick = createOffer;
@@ -120,7 +137,7 @@
 
         async function createOffer() {
             showStatus("Creating offer...");
-            answererPanel.classList.add('role-disabled'); // IMPROVEMENT: Disable other role's UI
+            answererPanel.classList.add('role-disabled');
             
             pc = new RTCPeerConnection(configuration);
             setupPeerConnectionEvents(pc);
@@ -135,7 +152,7 @@
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
                 
-                showStatus("Gathering ICE candidates...");
+                showStatus("Gathering ICE candidates (incl. TURN)...");
                 await iceGatheringPromise;
                 
                 offerSDP.value = JSON.stringify(pc.localDescription);
@@ -149,7 +166,7 @@
         
         async function createAnswer() {
             showStatus("Creating answer...");
-            offererPanel.classList.add('role-disabled'); // IMPROVEMENT: Disable other role's UI
+            offererPanel.classList.add('role-disabled');
 
             pc = new RTCPeerConnection(configuration);
             setupPeerConnectionEvents(pc);
@@ -167,7 +184,7 @@
                 const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
                 
-                showStatus("Gathering ICE candidates...");
+                showStatus("Gathering ICE candidates (incl. TURN)...");
                 await iceGatheringPromise;
 
                 answerToShare.value = JSON.stringify(pc.localDescription);
@@ -197,7 +214,6 @@
         function setupPeerConnectionEvents(peerConnection) {
             peerConnection.ontrack = (event) => {
                 showStatus("Receiving remote stream...");
-                // IMPROVEMENT: Assign the whole stream at once.
                 if (remoteVideo.srcObject !== event.streams[0]) {
                     remoteVideo.srcObject = event.streams[0];
                 }
