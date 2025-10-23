@@ -38,7 +38,11 @@
             </div>
             <div class="bg-gray-700 p-4 rounded-lg">
                 <h2 class="text-xl font-semibold mb-2 text-center">Remote Stream</h2>
-                <video id="remoteVideo" playsinline autoplay class="w-full h-auto bg-black rounded-md aspect-video"></video>
+                <!-- 
+                  FIX: Added the 'muted' attribute here. 
+                  Browsers block autoplay for video with audio unless it's muted.
+                -->
+                <video id="remoteVideo" playsinline autoplay muted class="w-full h-auto bg-black rounded-md aspect-video"></video>
             </div>
         </div>
 
@@ -144,6 +148,11 @@
                 localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
                 localVideo.srcObject = localStream;
                 
+                // Add a check to make sure local video is playing
+                localVideo.onloadedmetadata = () => {
+                    localVideo.play().catch(e => console.warn("Local video play failed:", e));
+                };
+
                 // Enable buttons
                 createOfferButton.disabled = false;
                 offerToReceive.disabled = false;
@@ -304,6 +313,7 @@
         function setupPeerConnectionEvents() {
             // Event listener for when the remote stream is added
             pc.ontrack = (event) => {
+                showStatus("Receiving remote stream...");
                 if (!remoteStream) {
                     remoteStream = new MediaStream();
                 }
@@ -313,7 +323,7 @@
                 
                 // Display the remote stream
                 remoteVideo.srcObject = remoteStream;
-                showStatus("Receiving remote stream!");
+                remoteVideo.play().catch(e => console.warn("Remote video play failed:", e));
             };
 
             // Event listener for ICE candidates
